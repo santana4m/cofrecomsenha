@@ -1,3 +1,4 @@
+// Bibliotecas
 #include <string.h>
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
@@ -10,79 +11,92 @@
 #include "driver/adc.h"
 #include "driver/gpio.h"
 
-#define DEBOUNCE_DELAY 200
-#define MAX_TENTATIVAS 3
+// Definição de constantes
+#define DEBOUNCE_DELAY 200      // Tempo de debounce para teclado (ms)
+#define MAX_TENTATIVAS 3        // Número máximo de tentativas de senha
 
-static const char *TAG = "Sistema";
-static uint8_t entradas, saidas = 0;
-static char tecla = '-';
-static char ultima_tecla = '-';
-static uint32_t ultimo_tempo = 0;
-char senha[5] = "1234";
-char entrada_usuario[5] = "    ";
-int posicao_digito = 0;
-int acessos = 0;
-int tentativas_erradas = 0;
-bool sistema_bloqueado = false;
-char escrever[40];
+// Declaração de variáveis globais
+static const char *TAG = "Sistema";       // Tag para logs
+static uint8_t entradas, saidas = 0;      // Variáveis para I/O
+static char tecla = '-';                  // Tecla atual lida
+static char ultima_tecla = '-';           // Última tecla lida (para debounce)
+static uint32_t ultimo_tempo = 0;         // Último tempo de leitura de tecla
+char senha[5] = "1234";                   // Senha cadastrada
+char entrada_usuario[5] = "    ";         // Senha digitada pelo usuário
+int posicao_digito = 0;                   // Posição atual na senha digitada
+int acessos = 0;                          // Contador de acessos bem-sucedidos
+int tentativas_erradas = 0;               // Contador de tentativas inválidas
+bool sistema_bloqueado = false;           // Flag de bloqueio do sistema
+char escrever[40];                        // Buffer para mensagens no LCD
 
-bool senha_correta = false;
-int opcao = 0;
-char grau_digito[4] = "";
-int pos_grau = 0;
+bool senha_correta = false;               // Flag se a senha foi validada
+int opcao = 0;                            // Opção escolhida pelo usuário (abrir/fechar)
+char grau_digito[4] = "";                 // Digitação de graus
+int pos_grau = 0;                         // Posição atual na digitação de graus
 
+// Função para limpar senha digitada e resetar o display
 void limpar_digitacao() {
-    memset(entrada_usuario, ' ', 5);
-    posicao_digito = 0;
-    escreve_lcd(1, 0, "Digite a senha: ");
-    sprintf(escrever, "Acessos: %d", acessos);
-    escreve_lcd(2, 0, escrever);
+    memset(entrada_usuario, ' ', 5);              // Preenche com espaços
+    posicao_digito = 0;                           // Reseta posição
+    escreve_lcd(1, 0, "Digite a senha: ");        // Mensagem no LCD
+    sprintf(escrever, "Acessos: %d", acessos);    // Mostra número de acessos
+    escreve_lcd(2, 0, escrever);                  // Exibe no LCD
 }
 
+// Função para bloquear o sistema após tentativas inválidas
 void bloquear_sistema() {
-    sistema_bloqueado = true;
-    limpar_lcd();
-    escreve_lcd(1, 0, " SISTEMA");
+    sistema_bloqueado = true;                     // Seta flag de bloqueio
+    limpar_lcd();                                 // Limpa o display
+    escreve_lcd(1, 0, " SISTEMA");                // Mensagem de bloqueio
     escreve_lcd(2, 0, " BLOQUEADO");
 }
 
+// Configuração inicial do ADC
 void config_adc() {
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
+    adc1_config_width(ADC_WIDTH_BIT_12);                  // Resolução de 12 bits
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11); // Atenuação de 11dB
 }
 
+// Função principal do programa (executada pelo FreeRTOS)
 void app_main(void) {
-    escrever[39] = '\0';
+    escrever[39] = '\0';                             // Garante fim de string
 
+    // Mensagens de log via terminal
     ESP_LOGI(TAG, "Iniciando sistema...");
     ESP_LOGI(TAG, "Versão do IDF: %s", esp_get_idf_version());
 
+    // Inicialização dos periféricos customizados
     iniciar_iotec();
     entradas = io_le_escreve(saidas);
     iniciar_lcd();
     config_adc();
 
+    // Exibe mensagem inicial no display
     escreve_lcd(1, 0, "    Jornada 1   ");
     escreve_lcd(2, 0, " Programa Basico");
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    limpar_lcd();
-    limpar_digitacao();
+    vTaskDelay(1000 / portTICK_PERIOD_MS);    // Espera 1 segundo
+    limpar_lcd();                             // Limpa display
+    limpar_digitacao();                       // Prepara tela para digitação
 
+    // Loop principal do sistema
     while (1) {
-        tecla = le_teclado();
+        tecla = le_teclado();                 // Lê tecla do teclado matricial
 
-        if (sistema_bloqueado) {
+        if (sistema_bloqueado) {              // Se bloqueado, espera e ignora input
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             continue;
         }
 
+        // Armazena tempo atual
         uint32_t tempo_atual = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
+        // Verifica se tecla 'C' foi pressionada (reset)
         if (tecla == 'C' && (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
             ultima_tecla = tecla;
             ultimo_tempo = tempo_atual;
 
+            // Reseta estado conforme senha validada ou não
             if (!senha_correta) {
                 limpar_digitacao();
             } else {
@@ -95,15 +109,19 @@ void app_main(void) {
             continue;
         }
 
+        // Se senha ainda não foi validada
         if (!senha_correta) {
+            // Se digitou número válido e não ultrapassou 4 dígitos
             if (tecla >= '0' && tecla <= '9' && posicao_digito < 4 &&
                 (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
+
                 entrada_usuario[posicao_digito] = tecla;
                 posicao_digito++;
 
                 ultima_tecla = tecla;
                 ultimo_tempo = tempo_atual;
 
+                // Mostra '*' no lugar dos números
                 escreve_lcd(1, 0, "                ");
                 for (int i = 0; i < posicao_digito; i++) {
                     escrever[i] = '*';
@@ -113,15 +131,18 @@ void app_main(void) {
 
                 vTaskDelay(50 / portTICK_PERIOD_MS);
             }
+            // Verifica se pressionou '=' para confirmar senha
             else if (tecla == '=' && (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
                 ultima_tecla = tecla;
                 ultimo_tempo = tempo_atual;
 
+                // Compara senha digitada com a cadastrada
                 if (posicao_digito == 4 && strncmp(entrada_usuario, senha, 4) == 0) {
                     acessos++;
                     tentativas_erradas = 0;
                     senha_correta = true;
 
+                    // Mostra menu de opções
                     escreve_lcd(1, 0, "1-Abrir  2-Fechar");
                     escreve_lcd(2, 0, "Escolha: ");
                 } else {
@@ -132,6 +153,7 @@ void app_main(void) {
                     sprintf(escrever, "Tentativas: %d/3", tentativas_restantes);
                     escreve_lcd(2, 0, escrever);
 
+                    // Se estourar tentativas, bloqueia sistema
                     if (tentativas_erradas >= MAX_TENTATIVAS) {
                         vTaskDelay(1000 / portTICK_PERIOD_MS);
                         bloquear_sistema();
@@ -143,6 +165,7 @@ void app_main(void) {
             }
         }
 
+        // Se senha correta e sem opção selecionada
         else if (senha_correta && opcao == 0) {
             if ((tecla == '1' || tecla == '2') &&
                 (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
@@ -159,6 +182,7 @@ void app_main(void) {
             }
         }
 
+        // Se senha correta e opção já escolhida (digitando graus)
         else if (senha_correta && opcao != 0) {
             if (tecla >= '0' && tecla <= '9' && pos_grau < 3 &&
                 (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
@@ -171,14 +195,15 @@ void app_main(void) {
                 ultimo_tempo = tempo_atual;
                 vTaskDelay(50 / portTICK_PERIOD_MS);
             }
+            // Confirmou ângulo com '='
             else if (tecla == '=' && pos_grau > 0 &&
                      (tecla != ultima_tecla || (tempo_atual - ultimo_tempo) > DEBOUNCE_DELAY)) {
                 ultima_tecla = tecla;
                 ultimo_tempo = tempo_atual;
 
-                int graus = atoi(grau_digito);
+                int graus = atoi(grau_digito); // Converte para inteiro
 
-                // Se maior que 90, confirmação de segurança
+                // Se grau maior que 90, pede confirmação
                 if (graus > 90) {
                     escreve_lcd(1, 0, "ALERTA: RISCO!");
                     escreve_lcd(2, 0, "1=OK  2=Cancel");
@@ -206,7 +231,7 @@ void app_main(void) {
                 escreve_lcd(2, 0, "                ");
                 vTaskDelay(500 / portTICK_PERIOD_MS);
 
-                rotacionar_driver(opcao == 1 ? 1 : 0, (float)graus, 0);
+                rotacionar_driver(opcao == 1 ? 1 : 0, (float)graus, 0); // Move motor
                 vTaskDelay(2000 / portTICK_PERIOD_MS);
 
                 senha_correta = false;
@@ -216,6 +241,6 @@ void app_main(void) {
             }
         }
 
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(10 / portTICK_PERIOD_MS); // Delay no loop principal
     }
 }
